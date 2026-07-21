@@ -1,8 +1,20 @@
 import fs from "fs";
 import path from "path";
+import os from "os";
 import chalk from "chalk";
 import type { NotionMCPClient } from "../MCPClient.js";
-import { parseMarkdownFile } from "../utils/markdownParser.js";
+import {
+  parseMarkdownFile,
+  parseHtmlFile,
+  parseMarkdownFileAsync,
+  parseHtmlFileAsync,
+  splitBlocksIntoChunks,
+  estimateBlockCount,
+  estimateHtmlBlockCount,
+  convertUnresolvedLocalImagesToWarnings,
+  type NotionBlock,
+} from "../utils/markdownParser.js";
+import { GoogleDriveUploader } from "./GoogleDriveUploader.js";
 
 export interface TaskCardInput {
   title: string;
@@ -17,11 +29,21 @@ export interface TaskCardInput {
   markdownContent?: string;
 }
 
+const MAX_NOTION_CHILDREN = 100;
+
 export class NotionProjectManager {
   private client: NotionMCPClient;
+  private googleDriveUploader: GoogleDriveUploader | null = null;
 
   constructor(client: NotionMCPClient) {
     this.client = client;
+  }
+
+  get driveUploader(): GoogleDriveUploader {
+    if (!this.googleDriveUploader) {
+      this.googleDriveUploader = new GoogleDriveUploader();
+    }
+    return this.googleDriveUploader;
   }
 
   /**
@@ -72,7 +94,7 @@ export class NotionProjectManager {
     }
 
     // Parse children blocks from markdown if provided
-    let children: Array<Record<string, unknown>> = [];
+    let children: NotionBlock[] = [];
     if (input.markdownContent) {
       const parsed = parseMarkdownFile(input.markdownContent);
       children = parsed.blocks;
@@ -82,29 +104,72 @@ export class NotionProjectManager {
     const result = await this.client.callTool("API-post-page", {
       parent,
       properties,
-      children: children.length > 0 ? children : undefined,
+      children: children.length > 0 ? children.slice(0, MAX_NOTION_CHILDREN) : undefined,
     });
+
+    // If there are more than 100 children, append the rest in batches
+    if (children.length > MAX_NOTION_CHILDREN) {
+      const pageId = this.extractPageId(result);
+      if (pageId) {
+        await this.appendBlocksInBatches(pageId, children.slice(MAX_NOTION_CHILDREN));
+      }
+    }
 
     return result;
   }
 
   /**
-   * Imports a local `.md` file and converts it into a Notion Page or Project Card
+   * Imports a local `.md` or `.html` file and converts it into a Notion Page or Project Card.
+   * Automatically splits content into batches if it exceeds 100 blocks.
+   * Local images are uploaded to Google Drive when credentials are available.
    */
-  async importMarkdownFile(filePath: string, parentId?: string, isDatabase = false) {
+  async importMarkdownFile(filePath: string, parentId?: string, isDatabase = false, useGoogleDrive = true) {
     const absolutePath = path.resolve(filePath);
     if (!fs.existsSync(absolutePath)) {
       throw new Error(`File not found: ${filePath}`);
     }
 
+    const ext = path.extname(filePath).toLowerCase();
+    const isHtml = ext === ".html" || ext === ".htm";
     const content = fs.readFileSync(absolutePath, "utf-8");
-    const filename = path.basename(filePath, ".md");
-    const parsed = parseMarkdownFile(content);
+    const filename = path.basename(filePath, ext);
+    const baseDir = path.dirname(absolutePath);
 
-    const title = parsed.frontmatter.title || filename;
-    const status = parsed.frontmatter.status || "Sedang berlangsung";
-    const priority = parsed.frontmatter.priority || "Tinggi";
-    const date = parsed.frontmatter.date;
+    const hasGoogleCredentials = this.hasGoogleDriveCredentials();
+    let parsed: { frontmatter: Record<string, unknown>; blocks: NotionBlock[] };
+
+    if (hasGoogleCredentials && useGoogleDrive) {
+      try {
+        parsed = isHtml
+          ? await parseHtmlFileAsync(content, baseDir, (p) => this.driveUploader.uploadAndGetUrl(p))
+          : await parseMarkdownFileAsync(content, baseDir, (p) => this.driveUploader.uploadAndGetUrl(p));
+      } catch (e: any) {
+        console.log(
+          chalk.yellow(
+            `⚠️  Google Drive upload failed (${e?.message || e}). Falling back to local-image placeholders.`
+          )
+        );
+        parsed = isHtml ? parseHtmlFile(content) : parseMarkdownFile(content);
+      }
+    } else {
+      parsed = isHtml ? parseHtmlFile(content) : parseMarkdownFile(content);
+      convertUnresolvedLocalImagesToWarnings(parsed.blocks);
+    }
+
+    const blockCount = parsed.blocks.length;
+
+    const title = (parsed.frontmatter.title as string) || filename;
+    const status = (parsed.frontmatter.status as string) || "Sedang berlangsung";
+    const priority = (parsed.frontmatter.priority as string) || "Tinggi";
+    const date = parsed.frontmatter.date as string | undefined;
+
+    if (blockCount > MAX_NOTION_CHILDREN) {
+      console.log(
+        chalk.yellow(
+          `⚠️  Content has ${blockCount} blocks. Notion limits 100 children per request. It will be split into ${Math.ceil(blockCount / MAX_NOTION_CHILDREN)} batches automatically.`
+        )
+      );
+    }
 
     if (isDatabase && parentId) {
       return this.createTaskCard({
@@ -113,7 +178,7 @@ export class NotionProjectManager {
         status,
         priority,
         startDate: date,
-        markdownContent: parsed.blocks.length > 0 ? content : undefined,
+        markdownContent: isHtml ? content : undefined,
       });
     }
 
@@ -121,16 +186,125 @@ export class NotionProjectManager {
       ? { page_id: parentId }
       : { workspace: true };
 
-    console.log(chalk.cyan(`Importing '${title}' from ${filePath} into Notion...`));
-    return this.client.callTool("API-post-page", {
+    const chunks = splitBlocksIntoChunks(parsed.blocks, MAX_NOTION_CHILDREN);
+
+    console.log(chalk.cyan(`Importing '${title}' from ${filePath} into Notion (${blockCount} blocks)...`));
+
+    const firstChunk = chunks[0] || [];
+    const result = await this.client.callTool("API-post-page", {
       parent,
       properties: {
         title: {
           title: [{ text: { content: title } }],
         },
       },
-      children: parsed.blocks,
+      children: firstChunk.length > 0 ? firstChunk : undefined,
     });
+
+    if (chunks.length > 1) {
+      const pageId = this.extractPageId(result);
+      if (!pageId) {
+        console.error(chalk.red("Could not determine created page ID for appending remaining blocks."));
+        return result;
+      }
+      for (let i = 1; i < chunks.length; i++) {
+        console.log(chalk.cyan(`  Appending batch ${i + 1}/${chunks.length} (${chunks[i].length} blocks)...`));
+        await this.client.appendBlockChildren(pageId, chunks[i]);
+      }
+      console.log(chalk.green(`Successfully imported all ${blockCount} blocks in ${chunks.length} batches.`));
+    }
+
+    return result;
+  }
+
+  private hasGoogleDriveCredentials(): boolean {
+    const credentialsPath = path.join(os.homedir(), ".notion_mcp", "google-credentials.json");
+    return fs.existsSync(credentialsPath);
+  }
+
+  /**
+   * Appends blocks from a Markdown or HTML file to an existing Notion page.
+   */
+  async appendBlocksToPage(pageId: string, filePath: string, useGoogleDrive = true) {
+    const absolutePath = path.resolve(filePath);
+    if (!fs.existsSync(absolutePath)) {
+      throw new Error(`File not found: ${filePath}`);
+    }
+
+    const ext = path.extname(filePath).toLowerCase();
+    const isHtml = ext === ".html" || ext === ".htm";
+    const content = fs.readFileSync(absolutePath, "utf-8");
+    const baseDir = path.dirname(absolutePath);
+
+    const hasGoogleCredentials = this.hasGoogleDriveCredentials();
+    let parsed: { frontmatter: Record<string, unknown>; blocks: NotionBlock[] };
+
+    if (hasGoogleCredentials && useGoogleDrive) {
+      try {
+        parsed = isHtml
+          ? await parseHtmlFileAsync(content, baseDir, (p) => this.driveUploader.uploadAndGetUrl(p))
+          : await parseMarkdownFileAsync(content, baseDir, (p) => this.driveUploader.uploadAndGetUrl(p));
+      } catch (e: any) {
+        console.log(
+          chalk.yellow(
+            `⚠️  Google Drive upload failed (${e?.message || e}). Falling back to local-image placeholders.`
+          )
+        );
+        parsed = isHtml ? parseHtmlFile(content) : parseMarkdownFile(content);
+      }
+    } else {
+      parsed = isHtml ? parseHtmlFile(content) : parseMarkdownFile(content);
+      convertUnresolvedLocalImagesToWarnings(parsed.blocks);
+    }
+
+    const blockCount = parsed.blocks.length;
+
+    if (blockCount === 0) {
+      console.log(chalk.yellow("No blocks found to append."));
+      return { success: true, appended: 0 };
+    }
+
+    if (blockCount > MAX_NOTION_CHILDREN) {
+      console.log(
+        chalk.yellow(
+          `⚠️  Content has ${blockCount} blocks. Will be split into ${Math.ceil(blockCount / MAX_NOTION_CHILDREN)} batches.`
+        )
+      );
+    }
+
+    await this.appendBlocksInBatches(pageId, parsed.blocks);
+    return { success: true, appended: blockCount };
+  }
+
+  /**
+   * Appends blocks to a page in batches of MAX_NOTION_CHILDREN.
+   */
+  async appendBlocksInBatches(pageId: string, blocks: NotionBlock[]) {
+    const chunks = splitBlocksIntoChunks(blocks, MAX_NOTION_CHILDREN);
+    for (let i = 0; i < chunks.length; i++) {
+      console.log(chalk.cyan(`  Appending batch ${i + 1}/${chunks.length} (${chunks[i].length} blocks)...`));
+      await this.client.appendBlockChildren(pageId, chunks[i]);
+    }
+    return { success: true, total: blocks.length, batches: chunks.length };
+  }
+
+  /**
+   * Extracts the page ID from an API response.
+   */
+  private extractPageId(result: any): string | null {
+    try {
+      if (result?.content && Array.isArray(result.content)) {
+        const text = result.content[0]?.text;
+        if (text) {
+          const parsed = JSON.parse(text);
+          return parsed.id || null;
+        }
+      }
+      if (result?.id) return result.id;
+      return null;
+    } catch {
+      return null;
+    }
   }
 
   /**

@@ -79,11 +79,20 @@ async function main() {
       const filePath = args[1];
       const parentId = args[2];
       if (!filePath) {
-        console.error(chalk.red("Error: Missing file path. Usage: notion_mcp sync <file.md> [parentId]"));
+        console.error(chalk.red("Error: Missing file path. Usage: notion_mcp sync <file.md|html> [parentId]"));
         process.exit(1);
       }
       const res = await client.importMarkdownFile(filePath, parentId);
       console.log(chalk.green("\nSync complete! Response:\n"), JSON.stringify(res, null, 2));
+    } else if (command === "append") {
+      const pageId = args[1];
+      const filePath = args[2];
+      if (!pageId || !filePath) {
+        console.error(chalk.red("Error: Missing arguments. Usage: notion_mcp append <page_id> <file.md|html>"));
+        process.exit(1);
+      }
+      const res = await client.appendToPage(pageId, filePath);
+      console.log(chalk.green("\nAppend complete! Response:\n"), JSON.stringify(res, null, 2));
     } else if (command === "task") {
       const subCmd = args[1]?.toLowerCase();
       if (subCmd === "create") {
@@ -139,15 +148,31 @@ async function main() {
       }
       const res = await client.callTool(toolName, toolArgs);
       console.log(JSON.stringify(res, null, 2));
+    } else if (command === "drive-auth") {
+      const res = await client.authorizeGoogleDrive();
+      console.log(chalk.green("Google Drive authorized successfully."));
+      console.log(JSON.stringify({ email: res.credentials.access_token ? "authorized" : "unknown" }, null, 2));
+    } else if (command === "drive-upload") {
+      const filePath = args[1];
+      if (!filePath) {
+        console.error(chalk.red("Error: Missing file path. Usage: notion_mcp drive-upload <file_path>"));
+        process.exit(1);
+      }
+      const res = await client.uploadToGoogleDrive(filePath);
+      console.log(chalk.green("\nUpload complete!"));
+      console.log(JSON.stringify(res, null, 2));
     } else {
       console.log(chalk.yellow(`Unknown subcommand '${command}'.`));
       console.log("Usage:");
-      console.log("  notion_mcp                             (starts interactive CLI)");
-      console.log("  notion_mcp tools                       (lists all tools)");
-      console.log("  notion_mcp users                       (lists workspace users)");
-      console.log("  notion_mcp self                        (prints bot details)");
-      console.log("  notion_mcp search <query>              (searches workspace)");
-      console.log("  notion_mcp sync <file.md> [parent_id]  (uploads & formats markdown)");
+      console.log("  notion_mcp                                   (starts interactive CLI)");
+      console.log("  notion_mcp tools                             (lists all tools)");
+      console.log("  notion_mcp users                             (lists workspace users)");
+      console.log("  notion_mcp self                              (prints bot details)");
+      console.log("  notion_mcp search <query>                    (searches workspace)");
+      console.log("  notion_mcp sync <file.md|html> [parent_id]   (uploads & auto-splits if >100 blocks)");
+      console.log("  notion_mcp append <page_id> <file.md|html>   (appends blocks to existing page)");
+      console.log("  notion_mcp drive-auth                        (authorize Google Drive)");
+      console.log("  notion_mcp drive-upload <file_path>          (upload a file to Google Drive notion_images folder)");
       console.log("  notion_mcp task create <title> [status] [priority]");
       console.log("  notion_mcp board <database_id>");
       console.log("  notion_mcp call <tool> <json_args>");

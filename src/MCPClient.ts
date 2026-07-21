@@ -4,6 +4,8 @@ import readline from "readline/promises";
 import chalk from "chalk";
 import type { ServerConfig, MCPToolInfo, NotionPageCreateOptions, TaskCardInput } from "./types.d.ts";
 import { NotionProjectManager } from "./services/NotionProjectManager.js";
+import type { NotionBlock } from "./utils/markdownParser.js";
+import { GoogleDriveUploader } from "./services/GoogleDriveUploader.js";
 
 export class NotionMCPClient {
   private mcp: Client;
@@ -151,6 +153,28 @@ export class NotionMCPClient {
 
   async importMarkdownFile(filePath: string, parentId?: string, isDatabase = false) {
     return this.projectManager.importMarkdownFile(filePath, parentId, isDatabase);
+  }
+
+  async appendToPage(pageId: string, filePath: string) {
+    return this.projectManager.appendBlocksToPage(pageId, filePath);
+  }
+
+  async appendBlocks(pageId: string, blocks: NotionBlock[]) {
+    return this.projectManager.appendBlocksInBatches(pageId, blocks);
+  }
+
+  // --- Google Drive Integration ---
+
+  get googleDrive(): GoogleDriveUploader {
+    return this.projectManager.driveUploader;
+  }
+
+  async authorizeGoogleDrive() {
+    return this.googleDrive.authorize();
+  }
+
+  async uploadToGoogleDrive(filePath: string) {
+    return this.googleDrive.uploadFile(filePath);
   }
 
   async getProjectBoard(databaseId: string) {
