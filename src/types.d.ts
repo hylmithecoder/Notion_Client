@@ -17,3 +17,17 @@ export interface NotionPageCreateOptions {
   icon?: Record<string, unknown>;
   cover?: Record<string, unknown>;
 }
+
+export interface TaskCardInput {
+  title: string;
+  databaseId?: string;
+  pageId?: string;
+  status?: "Belum dimulai" | "Sedang berlangsung" | "Selesai" | string;
+  priority?: "Tinggi" | "Sedang" | "Rendah" | string;
+  progress?: number;
+  startDate?: string;
+  endDate?: string;
+  assigneeId?: string;
+  markdownContent?: string;
+}
+

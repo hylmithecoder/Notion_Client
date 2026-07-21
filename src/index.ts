@@ -25,7 +25,6 @@ function loadServerConfig(): ServerConfig {
     }
   }
 
-  // Fallback to npx @notionhq/notion-mcp-server using process.env.NOTION_TOKEN or NOTION_API_KEY
   const token = process.env.NOTION_TOKEN || process.env.NOTION_API_KEY;
   if (token) {
     return {
@@ -70,6 +69,53 @@ async function main() {
       const query = args.slice(1).join(" ");
       const res = await client.search(query);
       console.log(JSON.stringify(res, null, 2));
+    } else if (command === "sync") {
+      const filePath = args[1];
+      const parentId = args[2];
+      if (!filePath) {
+        console.error(chalk.red("Error: Missing file path. Usage: notion_mcp sync <file.md> [parentId]"));
+        process.exit(1);
+      }
+      const res = await client.importMarkdownFile(filePath, parentId);
+      console.log(chalk.green("\nSync complete! Response:\n"), JSON.stringify(res, null, 2));
+    } else if (command === "task") {
+      const subCmd = args[1]?.toLowerCase();
+      if (subCmd === "create") {
+        const title = args[2] || "New Task Card";
+        const status = args[3] || "Sedang berlangsung";
+        const priority = args[4] || "Tinggi";
+        const databaseId = args[5];
+
+        const res = await client.createTaskCard({
+          title,
+          status,
+          priority,
+          databaseId,
+        });
+        console.log(chalk.green("\nTask Card created! Response:\n"), JSON.stringify(res, null, 2));
+      } else {
+        console.log("Usage: notion_mcp task create <title> [status] [priority] [databaseId]");
+      }
+    } else if (command === "board") {
+      const databaseId = args[1];
+      if (!databaseId) {
+        console.error(chalk.red("Error: Missing database ID. Usage: notion_mcp board <databaseId>"));
+        process.exit(1);
+      }
+      const res = await client.getProjectBoard(databaseId);
+      console.log(JSON.stringify(res, null, 2));
+    } else if (command === "databases" || command === "dbs") {
+      const dbs = await client.listDatabases();
+      console.log(chalk.bold("\nAccessible Databases:"));
+      console.log(JSON.stringify(dbs, null, 2));
+    } else if (command === "pages") {
+      const pages = await client.listPages();
+      console.log(chalk.bold("\nAccessible Pages:"));
+      console.log(JSON.stringify(pages, null, 2));
+    } else if (command === "activity" || command === "recents") {
+      const activity = await client.getActivity();
+      console.log(chalk.bold("\nRecent Workspace Activity:"));
+      console.log(JSON.stringify(activity, null, 2));
     } else if (command === "call") {
       const toolName = args[1];
       if (!toolName) {
@@ -90,12 +136,15 @@ async function main() {
     } else {
       console.log(chalk.yellow(`Unknown subcommand '${command}'.`));
       console.log("Usage:");
-      console.log("  notion_mcp                  (starts interactive CLI)");
-      console.log("  notion_mcp tools            (lists all tools)");
-      console.log("  notion_mcp users            (lists workspace users)");
-      console.log("  notion_mcp self             (prints bot details)");
-      console.log("  notion_mcp search <query>   (searches workspace)");
-      console.log("  notion_mcp call <tool> <json_args> (calls a specific tool)");
+      console.log("  notion_mcp                             (starts interactive CLI)");
+      console.log("  notion_mcp tools                       (lists all tools)");
+      console.log("  notion_mcp users                       (lists workspace users)");
+      console.log("  notion_mcp self                        (prints bot details)");
+      console.log("  notion_mcp search <query>              (searches workspace)");
+      console.log("  notion_mcp sync <file.md> [parent_id]  (uploads & formats markdown)");
+      console.log("  notion_mcp task create <title> [status] [priority]");
+      console.log("  notion_mcp board <database_id>");
+      console.log("  notion_mcp call <tool> <json_args>");
     }
   } catch (error) {
     console.error(chalk.red("Client execution error:"), error);

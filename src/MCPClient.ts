@@ -2,7 +2,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import readline from "readline/promises";
 import chalk from "chalk";
-import type { ServerConfig, MCPToolInfo, NotionPageCreateOptions } from "./types.d.ts";
+import type { ServerConfig, MCPToolInfo, NotionPageCreateOptions, TaskCardInput } from "./types.d.ts";
+import { NotionProjectManager } from "./services/NotionProjectManager.js";
 
 export class NotionMCPClient {
   private mcp: Client;
@@ -136,6 +137,36 @@ export class NotionMCPClient {
       block_id: blockId,
       children,
     });
+  }
+
+  // --- Project Board & Markdown Automation ---
+
+  get projectManager(): NotionProjectManager {
+    return new NotionProjectManager(this);
+  }
+
+  async createTaskCard(input: TaskCardInput) {
+    return this.projectManager.createTaskCard(input);
+  }
+
+  async importMarkdownFile(filePath: string, parentId?: string, isDatabase = false) {
+    return this.projectManager.importMarkdownFile(filePath, parentId, isDatabase);
+  }
+
+  async getProjectBoard(databaseId: string) {
+    return this.projectManager.getProjectBoard(databaseId);
+  }
+
+  async listDatabases() {
+    return this.projectManager.listDatabases();
+  }
+
+  async listPages() {
+    return this.projectManager.listPages();
+  }
+
+  async getActivity() {
+    return this.projectManager.getActivity();
   }
 
   // --- Interactive REPL CLI ---

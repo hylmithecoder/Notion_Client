@@ -34,3 +34,4 @@ yarn-error.log*
 
 test_notion.ts
 server-config.json
+test_all_features.ts

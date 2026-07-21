@@ -6,6 +6,8 @@
   "scripts": {
     "clean": "rm -rf dist",
     "build": "npm run clean && tsc",
+    "compile": "bun build --compile src/index.ts --outfile dist/notion_mcp || $HOME/.bun/bin/bun build --compile src/index.ts --outfile dist/notion_mcp",
+    "perry:build": "perry compile src/index.ts -o dist/notion_mcp",
     "prepare": "npm run build",
     "watch": "tsc --watch"
   },
@@ -22,5 +24,45 @@
   },
   "bin": {
     "notion_mcp": "dist/index.js"
+  },
+  "perry": {
+    "compilePackages": [
+      "@modelcontextprotocol/sdk",
+      "chalk",
+      "dotenv",
+      "zod",
+      "zod-to-json-schema",
+      "ajv",
+      "ajv-formats",
+      "cross-spawn",
+      "fast-deep-equal",
+      "json-schema-traverse",
+      "fast-uri",
+      "which",
+      "path-key",
+      "shebang-command",
+      "shebang-regex",
+      "isexe"
+    ],
+    "allow": {
+      "compilePackages": [
+        "@modelcontextprotocol/sdk",
+        "chalk",
+        "dotenv",
+        "zod",
+        "zod-to-json-schema",
+        "ajv",
+        "ajv-formats",
+        "cross-spawn",
+        "fast-deep-equal",
+        "json-schema-traverse",
+        "fast-uri",
+        "which",
+        "path-key",
+        "shebang-command",
+        "shebang-regex",
+        "isexe"
+      ]
+    }
   }
 }
