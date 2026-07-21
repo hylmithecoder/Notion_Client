@@ -2,6 +2,7 @@
 
 import fs from "fs";
 import path from "path";
+import os from "os";
 import dotenv from "dotenv";
 import { NotionMCPClient } from "./MCPClient.js";
 import chalk from "chalk";
@@ -10,18 +11,22 @@ import type { ServerConfig } from "./types.d.ts";
 dotenv.config();
 
 function loadServerConfig(): ServerConfig {
-  const configPath = path.join(process.cwd(), "server-config.json");
-  if (fs.existsSync(configPath)) {
-    try {
-      const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-      return {
-        command: config.command,
-        args: config.args,
-        env: config.env,
-      };
-    } catch (e) {
-      console.error(chalk.red("Error parsing server-config.json:"), e);
-      process.exit(1);
+  const cwdConfigPath = path.join(process.cwd(), "server-config.json");
+  const homeConfigPath = path.join(os.homedir(), ".notion_mcp", "server-config.json");
+
+  for (const configPath of [cwdConfigPath, homeConfigPath]) {
+    if (fs.existsSync(configPath)) {
+      try {
+        const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+        return {
+          command: config.command,
+          args: config.args,
+          env: config.env,
+        };
+      } catch (e) {
+        console.error(chalk.red("Error parsing server-config.json:"), e);
+        process.exit(1);
+      }
     }
   }
 
@@ -38,7 +43,8 @@ function loadServerConfig(): ServerConfig {
   }
 
   console.log(chalk.red.bold("Configuration Error: ") + "No server-config.json found and NOTION_TOKEN is not set.");
-  console.log(chalk.yellow("Please create server-config.json or set NOTION_TOKEN in your environment."));
+  console.log(chalk.yellow("Please create server-config.json in the current directory or at ~/.notion_mcp/server-config.json,"));
+  console.log(chalk.yellow("or set NOTION_TOKEN in your environment."));
   process.exit(1);
 }
 
