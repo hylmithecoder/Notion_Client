@@ -6,11 +6,13 @@ import type { ServerConfig, MCPToolInfo, NotionPageCreateOptions, TaskCardInput 
 import { NotionProjectManager } from "./services/NotionProjectManager.js";
 import type { NotionBlock } from "./utils/markdownParser.js";
 import { GoogleDriveUploader } from "./services/GoogleDriveUploader.js";
+import { stringifyMCPResponse } from "./utils/formatMCPResponse.js";
 
 export class NotionMCPClient {
   private mcp: Client;
   private transport: StdioClientTransport | null = null;
   private tools: MCPToolInfo[] = [];
+  private notionToken: string | undefined;
 
   constructor(clientName = "notion-mcp-client") {
     this.mcp = new Client({ name: clientName, version: "1.0.0" });
@@ -55,6 +57,10 @@ export class NotionMCPClient {
         if (serverConfig.env) {
           Object.assign(envMap, serverConfig.env);
         }
+        this.notionToken = serverConfig.env?.NOTION_TOKEN
+          || serverConfig.env?.NOTION_API_KEY
+          || process.env.NOTION_TOKEN
+          || process.env.NOTION_API_KEY;
 
         this.transport = new StdioClientTransport({
           command: serverConfig.command,
@@ -128,6 +134,65 @@ export class NotionMCPClient {
 
   async createPage(options: NotionPageCreateOptions) {
     return this.callTool("API-post-page", options as unknown as Record<string, unknown>);
+  }
+
+  /**
+   * Creates a database using Notion's current REST endpoint.
+   *
+   * The local MCP server does not yet expose Create Database for API
+   * 2025-09-03+, so this method uses the same configured integration token
+   * directly.
+   */
+  async createDatabase(parentPageId: string, title: string) {
+    if (!this.notionToken) {
+      throw new Error("NOTION_TOKEN or NOTION_API_KEY is required to create a database.");
+    }
+
+    const response = await fetch("https://api.notion.com/v1/databases", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.notionToken}`,
+        "Content-Type": "application/json",
+        "Notion-Version": "2026-03-11",
+      },
+      body: JSON.stringify({
+        parent: {
+          type: "page_id",
+          page_id: parentPageId,
+        },
+        title: [
+          {
+            type: "text",
+            text: { content: title },
+          },
+        ],
+        initial_data_source: {
+          properties: {
+            Name: { type: "title", title: {} },
+            Status: {
+              type: "select",
+              select: {
+                options: [
+                  { name: "Not Started", color: "gray" },
+                  { name: "In Progress", color: "blue" },
+                  { name: "Done", color: "green" },
+                ],
+              },
+            },
+            Created: { type: "created_time", created_time: {} },
+          },
+        },
+      }),
+    });
+
+    const result = await response.json();
+    if (!response.ok) {
+      const message = typeof result === "object" && result && "message" in result
+        ? String(result.message)
+        : `HTTP ${response.status}`;
+      throw new Error(`Failed to create Notion database: ${message}`);
+    }
+    return result;
   }
 
   async getBlockChildren(blockId: string) {
@@ -231,20 +296,20 @@ export class NotionMCPClient {
 
         if (input.toLowerCase() === "users") {
           const res = await this.getUsers();
-          console.log("\n" + JSON.stringify(res, null, 2) + "\n");
+          console.log("\n" + stringifyMCPResponse(res) + "\n");
           continue;
         }
 
         if (input.toLowerCase() === "self") {
           const res = await this.getSelf();
-          console.log("\n" + JSON.stringify(res, null, 2) + "\n");
+          console.log("\n" + stringifyMCPResponse(res) + "\n");
           continue;
         }
 
         if (input.toLowerCase().startsWith("search")) {
           const query = input.slice(6).trim();
           const res = await this.search(query);
-          console.log("\n" + JSON.stringify(res, null, 2) + "\n");
+          console.log("\n" + stringifyMCPResponse(res) + "\n");
           continue;
         }
 
@@ -262,7 +327,7 @@ export class NotionMCPClient {
             }
           }
           const res = await this.callTool(toolName, argsObj);
-          console.log("\n" + JSON.stringify(res, null, 2) + "\n");
+          console.log("\n" + stringifyMCPResponse(res) + "\n");
           continue;
         }
 

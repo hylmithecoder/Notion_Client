@@ -34,6 +34,10 @@ A lightweight, dedicated Command Line Interface (CLI) and TypeScript client for 
 Run `notion_mcp` directly from terminal:
 
 ```bash
+# Fast, offline command reference for AI agents and humans
+notion_mcp docs
+notion_mcp docs --json
+
 # Interactive REPL mode
 notion_mcp
 
@@ -51,7 +55,17 @@ notion_mcp search "my page"
 
 # Call any Notion tool directly with JSON arguments
 notion_mcp call API-post-search '{"query": "notes"}'
+
+# Create a database under an accessible parent page
+notion_mcp database create <parent_page_id> "Tasks"
 ```
+
+Tool responses are automatically unwrapped from the MCP `content[].text`
+envelope and printed as readable, indented JSON.
+
+The `docs` command does not load configuration or connect to Notion, making it
+safe and fast for an AI agent to inspect before using the binary. `help`,
+`--help`, and `-h` are aliases.
 
 ## Programmatic Usage
 

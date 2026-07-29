@@ -7,6 +7,8 @@ import dotenv from "dotenv";
 import { NotionMCPClient } from "./MCPClient.js";
 import chalk from "chalk";
 import type { ServerConfig } from "./types.d.ts";
+import { stringifyMCPResponse } from "./utils/formatMCPResponse.js";
+import { CLI_DOCS, renderCliDocs } from "./cliDocs.js";
 
 dotenv.config();
 
@@ -52,6 +54,11 @@ async function main() {
   const args = process.argv.slice(2);
   const command = args[0]?.toLowerCase();
 
+  if (command === "docs" || command === "help" || command === "--help" || command === "-h") {
+    console.log(args[1] === "--json" ? JSON.stringify(CLI_DOCS, null, 2) : renderCliDocs());
+    return;
+  }
+
   const serverConfig = loadServerConfig();
   const client = new NotionMCPClient();
 
@@ -67,14 +74,14 @@ async function main() {
       });
     } else if (command === "users") {
       const res = await client.getUsers();
-      console.log(JSON.stringify(res, null, 2));
+      console.log(stringifyMCPResponse(res));
     } else if (command === "self") {
       const res = await client.getSelf();
-      console.log(JSON.stringify(res, null, 2));
+      console.log(stringifyMCPResponse(res));
     } else if (command === "search") {
       const query = args.slice(1).join(" ");
       const res = await client.search(query);
-      console.log(JSON.stringify(res, null, 2));
+      console.log(stringifyMCPResponse(res));
     } else if (command === "sync") {
       const filePath = args[1];
       const parentId = args[2];
@@ -83,7 +90,7 @@ async function main() {
         process.exit(1);
       }
       const res = await client.importMarkdownFile(filePath, parentId);
-      console.log(chalk.green("\nSync complete! Response:\n"), JSON.stringify(res, null, 2));
+      console.log(chalk.green("\nSync complete! Response:\n"), stringifyMCPResponse(res));
     } else if (command === "append") {
       const pageId = args[1];
       const filePath = args[2];
@@ -92,7 +99,7 @@ async function main() {
         process.exit(1);
       }
       const res = await client.appendToPage(pageId, filePath);
-      console.log(chalk.green("\nAppend complete! Response:\n"), JSON.stringify(res, null, 2));
+      console.log(chalk.green("\nAppend complete! Response:\n"), stringifyMCPResponse(res));
     } else if (command === "task") {
       const subCmd = args[1]?.toLowerCase();
       if (subCmd === "create") {
@@ -107,7 +114,7 @@ async function main() {
           priority,
           databaseId,
         });
-        console.log(chalk.green("\nTask Card created! Response:\n"), JSON.stringify(res, null, 2));
+        console.log(chalk.green("\nTask Card created! Response:\n"), stringifyMCPResponse(res));
       } else {
         console.log("Usage: notion_mcp task create <title> [status] [priority] [databaseId]");
       }
@@ -118,11 +125,20 @@ async function main() {
         process.exit(1);
       }
       const res = await client.getProjectBoard(databaseId);
-      console.log(JSON.stringify(res, null, 2));
+      console.log(stringifyMCPResponse(res));
     } else if (command === "databases" || command === "dbs") {
       const dbs = await client.listDatabases();
       console.log(chalk.bold("\nAccessible Databases:"));
       console.log(JSON.stringify(dbs, null, 2));
+    } else if (command === "database" && args[1]?.toLowerCase() === "create") {
+      const parentPageId = args[2];
+      const title = args.slice(3).join(" ") || "New Database";
+      if (!parentPageId) {
+        console.error(chalk.red("Error: Missing parent page ID. Usage: notion_mcp database create <parent_page_id> [title]"));
+        process.exit(1);
+      }
+      const database = await client.createDatabase(parentPageId, title);
+      console.log(chalk.green("\nDatabase created successfully:\n"), JSON.stringify(database, null, 2));
     } else if (command === "pages") {
       const pages = await client.listPages();
       console.log(chalk.bold("\nAccessible Pages:"));
@@ -147,7 +163,7 @@ async function main() {
         }
       }
       const res = await client.callTool(toolName, toolArgs);
-      console.log(JSON.stringify(res, null, 2));
+      console.log(stringifyMCPResponse(res));
     } else if (command === "drive-auth") {
       const res = await client.authorizeGoogleDrive();
       console.log(chalk.green("Google Drive authorized successfully."));
@@ -164,6 +180,7 @@ async function main() {
     } else {
       console.log(chalk.yellow(`Unknown subcommand '${command}'.`));
       console.log("Usage:");
+      console.log("  notion_mcp docs [--json]                     (offline AI-oriented command reference)");
       console.log("  notion_mcp                                   (starts interactive CLI)");
       console.log("  notion_mcp tools                             (lists all tools)");
       console.log("  notion_mcp users                             (lists workspace users)");
@@ -175,6 +192,7 @@ async function main() {
       console.log("  notion_mcp drive-upload <file_path>          (upload a file to Google Drive notion_images folder)");
       console.log("  notion_mcp task create <title> [status] [priority]");
       console.log("  notion_mcp board <database_id>");
+      console.log("  notion_mcp database create <parent_page_id> [title]");
       console.log("  notion_mcp call <tool> <json_args>");
     }
   } catch (error) {
